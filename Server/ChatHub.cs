@@ -39,6 +39,8 @@ public class ChatHub : Hub
     
     public async Task SendMessage(string username, string message)
     {
+        if(message == "")
+            return;
         await Clients.All.SendAsync("ReceiveMessage",username,  message);
     }
         
