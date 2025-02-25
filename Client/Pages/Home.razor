@@ -1,0 +1,185 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager Navigation
+<PageTitle>Chat</PageTitle>
+
+<div class="container mt-4">
+    <h2 class="text-center">Live Chat</h2>
+
+    @if (hubConnection is not null && hubConnection.State == HubConnectionState.Connected)
+    {
+        @if (!isNameSet)
+        {
+            <div class="d-flex justify-content-center">
+                <input @bind="userInput" class="form-control w-50 me-2" placeholder="Gib deinen Namen ein" />
+                <button @onclick="SetUsername" class="btn btn-primary">Bestätigen</button>
+            </div>
+        }
+        else
+        {
+            <div class="row mt-4">
+                <div class="col-md-4">
+                    <div class="card p-3">
+                        <h4>Räume</h4>
+                        <select @bind="selectedRoom" class="form-select mb-2">
+                            @foreach (var room in chatRooms)
+                            {
+                                <option value="@room">@room</option>
+                            }
+                        </select>
+                        <button @onclick="JoinRoom" class="btn btn-success w-100">Beitreten</button>
+                        <button @onclick="LeaveRoom" class="btn btn-warning w-100 mt-2">Verlassen</button>
+
+                        <h5 class="mt-3">Neuer Raum:</h5>
+                        <input @bind="newRoomName" class="form-control mb-2" placeholder="Raumname" />
+                        <button @onclick="CreateRoom" class="btn btn-info w-100">Erstellen</button>
+
+                        <h5 class="mt-3">Raum löschen:</h5>
+                        <button @onclick="DeleteRoom" class="btn btn-danger w-100">Löschen</button>
+                    </div>
+                </div>
+
+                <div class="col-md-8">
+                    @if (!string.IsNullOrEmpty(currentRoom))
+                    {
+                        <div class="card p-3">
+                            <h4 class="text-primary">Raum: @currentRoom</h4>
+
+                            <div class="chat-box border rounded p-2 mb-3" style="height: 300px; overflow-y: auto;">
+                                @foreach (var message in messages)
+                                {
+                                    <div class="alert alert-secondary p-2">@message</div>
+                                }
+                            </div>
+
+                            <div class="d-flex">
+                                <input @bind="messageInput" class="form-control me-2" placeholder="Deine Nachricht" />
+                                <button @onclick="SendMessage" class="btn btn-primary">Senden</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+    else
+    {
+        <p class="text-center text-muted">Verbindet...</p>
+    }
+</div>
+
+@code {
+    private HubConnection? hubConnection;
+    private List<string> messages = new();
+    private string userInput = string.Empty;
+    private string messageInput = string.Empty;
+    private string currentRoom = string.Empty;
+    private string selectedRoom = string.Empty;
+    private string newRoomName = string.Empty;
+    private bool isNameSet = false;
+    private List<string> chatRooms = new() { "Generell" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl("http://localhost:5068/chat")
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<string, string>("ReceiveMessage", (user, message) =>
+        {
+            messages.Add($"{user}: {message}");
+            StateHasChanged();
+        });
+
+        hubConnection.On("NameSet", (string name) =>
+        {
+            userInput = name;
+            isNameSet = true;
+            StateHasChanged();
+        });
+
+        hubConnection.On<string>("RoomAdded", (room) =>
+        {
+            if (!chatRooms.Contains(room))
+            {
+                chatRooms.Add(room);
+                StateHasChanged();
+            }
+        });
+
+        hubConnection.On<string>("RoomRemoved", (room) =>
+        {
+            if (chatRooms.Contains(room))
+            {
+                chatRooms.Remove(room);
+                if (currentRoom == room)
+                {
+                    currentRoom = string.Empty;
+                    messages.Clear();
+                }
+                StateHasChanged();
+            }
+        });
+
+        await hubConnection.StartAsync();
+    }
+
+    private async Task JoinRoom()
+    {
+        if (hubConnection is not null && !string.IsNullOrEmpty(selectedRoom))
+        {
+            if (!string.IsNullOrEmpty(currentRoom))
+            {
+                await hubConnection.SendAsync("LeaveRoom", currentRoom);
+            }
+            currentRoom = selectedRoom;
+            messages.Clear();
+            await hubConnection.SendAsync("JoinRoom", currentRoom);
+        }
+    }
+
+    private async Task LeaveRoom()
+    {
+        if (hubConnection is not null && !string.IsNullOrEmpty(currentRoom))
+        {
+            await hubConnection.SendAsync("LeaveRoom", currentRoom);
+            currentRoom = string.Empty;
+            messages.Clear();
+        }
+    }
+
+    private async Task SendMessage()
+    {
+        if (hubConnection is not null && !string.IsNullOrEmpty(currentRoom) && isNameSet)
+        {
+            await hubConnection.SendAsync("SendMessage", userInput, messageInput);
+            messageInput = string.Empty;
+        }
+    }
+
+    private async Task SetUsername()
+    {
+        if (!string.IsNullOrEmpty(userInput) && hubConnection is not null)
+        {
+            await hubConnection.SendAsync("SetName", userInput);
+        }
+    }
+
+    private async Task CreateRoom()
+    {
+        if (!string.IsNullOrEmpty(newRoomName) && hubConnection is not null)
+        {
+            await hubConnection.SendAsync("CreateRoom", newRoomName);
+            newRoomName = string.Empty;
+        }
+    }
+
+    private async Task DeleteRoom()
+    {
+        if (!string.IsNullOrEmpty(selectedRoom) && hubConnection is not null && chatRooms.Contains(selectedRoom))
+        {
+            await hubConnection.SendAsync("DeleteRoom", selectedRoom);
+        }
+    }
+}
