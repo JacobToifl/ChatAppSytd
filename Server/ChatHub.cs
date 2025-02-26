@@ -3,38 +3,63 @@
 namespace Server;
 public class ChatHub : Hub
 {
-    public async Task SetName(string username)
+    private static List<string> chatRooms = new() { "Generell" };
+    private static readonly Dictionary<string, HashSet<string>> roomUsers = new();
+    private static readonly Dictionary<string, string> userNames = new();
+    
+    public async Task SetName(string name)
     {
-        if (UsernameStorage.Storage.ContainsValue(username))
+        if (!userNames.ContainsKey(Context.ConnectionId))
         {
-            await Clients.Caller.SendAsync("NameExistsError");
-            return;
+            userNames[Context.ConnectionId] = name;
+            await Clients.Caller.SendAsync("NameSet", name); 
         }
-        
-        UsernameStorage.Storage[Context.ConnectionId] = username;
-        await Clients.Caller.SendAsync("NameSet", username);
     }
 
-    public async Task JoinRoom(string roomName)
+    
+    public async Task JoinRoom(string room)
     {
-        if (!UsernameStorage.Storage.TryGetValue(Context.ConnectionId, out var username))
+        if (!roomUsers.ContainsKey(room))
         {
-            await Clients.Caller.SendAsync("Error", "Name not set");
-            return;
+            roomUsers[room] = new HashSet<string>();
         }
-        
-        await Groups.AddToGroupAsync(Context.ConnectionId, roomName);
-        await Clients.Group(roomName).SendAsync("ReceiveMessage", "System", $"{username} ist dem Raum '{roomName}' beigetreten.");
+        roomUsers[room].Add(Context.ConnectionId);
+        await Groups.AddToGroupAsync(Context.ConnectionId, room);
+        string userName = userNames.ContainsKey(Context.ConnectionId) ? userNames[Context.ConnectionId] : "Ein Benutzer";
+        await Clients.Group(room).SendAsync("ReceiveMessage", "System", $"{userName} ist dem Raum beigetreten.");
     }
 
-    public async Task LeaveRoom(string roomName)
+
+    public async Task LeaveRoom(string room)
     {
-        if (UsernameStorage.Storage.TryGetValue(Context.ConnectionId, out var username))
+        string userName = userNames.ContainsKey(Context.ConnectionId) ? userNames[Context.ConnectionId] : "Ein Benutzer";
+
+        if (roomUsers.ContainsKey(room))
         {
-            await Clients.Group(roomName).SendAsync("ReceiveMessage", "System", $"{username} hat den Raum '{roomName}' verlassen.");
+            roomUsers[room].Remove(Context.ConnectionId);
+            if (roomUsers[room].Count == 0)
+            {
+                roomUsers.Remove(room);
+            }
         }
-        
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomName);
+
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, room);
+        await Clients.Group(room).SendAsync("ReceiveMessage", "System", $"{userName} hat den Raum verlassen.");
+    }
+
+
+
+    public Task<bool> IsRoomEmpty(string room)
+    {
+        return Task.FromResult(!roomUsers.ContainsKey(room) || roomUsers[room].Count == 0);
+    }
+
+    public async Task DeleteRoom(string room)
+    {
+        if (await IsRoomEmpty(room))
+        {
+            await Clients.All.SendAsync("RoomRemoved", room);
+        }
     }
     
     public async Task SendMessage(string username, string message)
@@ -44,7 +69,6 @@ public class ChatHub : Hub
         await Clients.All.SendAsync("ReceiveMessage",username,  message);
     }
         
-    private static List<string> chatRooms = new() { "Generell" };
 
     public async Task CreateRoom(string roomName)
     {
@@ -52,15 +76,6 @@ public class ChatHub : Hub
         {
             chatRooms.Add(roomName);
             await Clients.All.SendAsync("RoomAdded", roomName);
-        }
-    }
-
-    public async Task DeleteRoom(string roomName)
-    {
-        if (chatRooms.Contains(roomName))
-        {
-            chatRooms.Remove(roomName);
-            await Clients.All.SendAsync("RoomRemoved", roomName);
         }
     }
 }
